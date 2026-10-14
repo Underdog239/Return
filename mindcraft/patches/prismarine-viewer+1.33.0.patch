@@ -1,0 +1,35 @@
+diff --git a/node_modules/prismarine-viewer/viewer/lib/entities.js b/node_modules/prismarine-viewer/viewer/lib/entities.js
+index 459e3f3..647fbfd 100644
+--- a/node_modules/prismarine-viewer/viewer/lib/entities.js
++++ b/node_modules/prismarine-viewer/viewer/lib/entities.js
+@@ -4,14 +4,15 @@ const TWEEN = require('@tweenjs/tween.js')
+ const Entity = require('./entity/Entity')
+ const { dispose3 } = require('./dispose')
+ 
+-const { createCanvas } = require('canvas')
++let createCanvas = null
++try { createCanvas = require('canvas').createCanvas } catch (err) { /* canvas is optional: only used for player name tags */ }
+ 
+ function getEntityMesh (entity, scene) {
+   if (entity.name) {
+     try {
+       const e = new Entity('1.16.4', entity.name, scene)
+ 
+-      if (entity.username !== undefined) {
++      if (entity.username !== undefined && createCanvas !== null) {
+         const canvas = createCanvas(500, 100)
+ 
+         const ctx = canvas.getContext('2d')
+diff --git a/node_modules/prismarine-viewer/viewer/lib/entity/Entity.js b/node_modules/prismarine-viewer/viewer/lib/entity/Entity.js
+index 8945452..dab25be 100644
+--- a/node_modules/prismarine-viewer/viewer/lib/entity/Entity.js
++++ b/node_modules/prismarine-viewer/viewer/lib/entity/Entity.js
+@@ -203,7 +203,7 @@ function getMesh (texture, jsonModel) {
+ class Entity {
+   constructor (version, type, scene) {
+     const e = entities[type]
+-    if (!e) throw new Error(`Unknown entity ${type}`)
++    if (!e) return; //throw new Error(`Unknown entity ${type}`)
+ 
+     this.mesh = new THREE.Object3D()
+     for (const [name, jsonModel] of Object.entries(e.geometry)) {

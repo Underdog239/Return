@@ -1,0 +1,15 @@
+diff --git a/node_modules/prismarine-entity/index.js b/node_modules/prismarine-entity/index.js
+index 0cef740..fe29b5f 100644
+--- a/node_modules/prismarine-entity/index.js
++++ b/node_modules/prismarine-entity/index.js
+@@ -65,7 +65,9 @@ module.exports = (registryOrVersion) => {
+       if (this.name !== 'item' && this.name !== 'Item' && this.name !== 'item_stack') {
+         return null // not a dropped item
+       }
+-      return Item.fromNotch(this.metadata[registry.supportFeature('metadataIxOfItem')])
++      const networkItem = this.metadata[registry.supportFeature('metadataIxOfItem')]
++      if (!networkItem) return null // item data not sent yet
++      return Item.fromNotch(networkItem)
+     }
+   }
+ 
