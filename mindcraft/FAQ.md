@@ -30,6 +30,19 @@
   - Possible reason 2: If you use vscode to edit, you need to `ctrl+s` to save the file for the changes to take effect.
   - Possible reason 3: Not setting the code path correctly in setting.js, use andy.js by default. 
 
+- `Cannot reach MindServer` / `MindServer not reachable` in the web dashboard: the page cannot reach
+  the MindServer backend on port 8080 (it has nothing to do with Ollama — that is checked after).
+  - Make sure MindServer is running: `./start.sh` (macOS/Linux), `start.bat` (Windows), or
+    `cd mindcraft && npm install && node main.js`. Keep that terminal open.
+  - Open the dashboard at the URL it prints: `http://localhost:8080`. If you opened the page from
+    GitHub Pages, from your phone, or by double-clicking `index.html`, then `127.0.0.1` points at
+    *that device* instead of your PC — use `http://localhost:8080`, or put your PC's IP
+    (e.g. `http://192.168.1.20:8080`) into **MindServer host URL** and press **↻ Retry**.
+  - `Port 8080 is already in use` means a MindServer (or another program) is already on that port:
+    open `http://localhost:8080`, or free the port / change `mindserver_port` in `settings.js`.
+  - The dashboard tries `this page`, port 8080 of the current host, the saved URL, `127.0.0.1:8080`,
+    `localhost:8080` and the current hostname on port 8080, and shows what it tried.
+
 # Common Questions
 - Mod Support? Mindcraft only supports client-side mods like optifine and sodium, though they can be tricky to set up. Mods that change minecraft game mechanics are not supported.
   

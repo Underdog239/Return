@@ -52,6 +52,12 @@ node main.js
 The dashboard opens automatically at **http://localhost:8080** (or run `./start.sh` / `start.bat`
 from the repo root, which install and start everything for you).
 
+> **Open the dashboard at `http://localhost:8080` — the address MindServer prints.**
+> The dashboard is a control panel for a bot that runs on *your* computer, so it needs MindServer
+> running next to it. Opening `index.html` directly, the GitHub Pages link, or the page from another
+> device only works while MindServer is running and reachable — in those cases `127.0.0.1` means
+> *that* device, not the computer running the bot.
+
 Then:
 
 1. Start your Minecraft server (or open your singleplayer world to LAN).
@@ -107,6 +113,35 @@ Everything mindcraft supports, plus the smart-skills added by this project:
 | `!endGoal` | Stop autonomous mode |
 | `!stats` / `!inventory` / `!goal` | Info queries |
 | `!newAction("...")` | Let the LLM write custom code (enable `allow_insecure_coding` first) |
+
+## Troubleshooting
+
+### “Cannot reach MindServer” / “MindServer not reachable”
+
+That message always means the same thing: **the browser page could not talk to the MindServer
+backend** (`GET /api/health` on port 8080 failed). It is not an Ollama problem — Ollama is only
+checked *after* MindServer answers.
+
+The dashboard now searches for MindServer automatically (this page → port 8080 of this host → the
+URL saved in the wizard → `127.0.0.1:8080` → `localhost:8080` → your machine's IP on port 8080) and
+lists every address it tried. Use the **↻ Retry** button in the *New Bot* window after fixing one of
+these:
+
+| Cause | Fix |
+|---|---|
+| MindServer was never started, or it crashed | Run `./start.sh` (macOS/Linux) or `start.bat` (Windows), or `cd mindcraft && npm install && node main.js`. Keep that window open — closing it stops the bot. |
+| `npm install` failed the first time (build tools, Node 23+) | See [`mindcraft/FAQ.md`](mindcraft/FAQ.md); Node **18–22 LTS** is recommended, or use `npm install --no-optional`. |
+| Port 8080 already in use | MindServer now prints *“Port 8080 is already in use”* instead of a stack trace. Open `http://localhost:8080` if it is already running, otherwise free the port or change `mindserver_port` in [`mindcraft/settings.js`](mindcraft/settings.js). |
+| You opened the page from a website (GitHub Pages) or another device | That page can only reach MindServer over the network: `127.0.0.1` then points at *that* device. Simplest fix: open **http://localhost:8080** (served by MindServer itself). For a bot on another machine, type its address (e.g. `http://192.168.1.20:8080`) into **MindServer host URL** and hit **↻ Retry**. |
+| You opened `index.html` from the file system | Use `http://localhost:8080` instead — a `file://` page cannot load the dashboard's assets and API. |
+| Browser blocks a page from calling localhost | Some browsers refuse `https://…` → `http://localhost` requests. Open `http://localhost:8080` (same origin) instead. |
+
+### “Ollama not detected”
+
+MindServer is fine (it answered) — Ollama itself is not responding on `127.0.0.1:11434`. Install it
+from [ollama.com](https://ollama.com), start it, and run `ollama pull sweaterdog/andy-4:micro-q8_0`
+(or `ollama list` to check what you have). You can also pick a cloud provider and paste an API key
+instead of using Ollama.
 
 ## Configuration
 

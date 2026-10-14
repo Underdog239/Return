@@ -21,7 +21,9 @@ export async function init(port=8080, auto_open_ui=true, host='0.0.0.0') {
         setTimeout(() => {
             // check if browser listener is already open
             if (numStateListeners() === 0) {
-                open('http://localhost:'+port);
+                // headless machines have no browser: never let this reject and take the server down
+                open('http://localhost:'+port)
+                    .catch(() => console.log(`Could not open a browser automatically — open http://localhost:${port} yourself.`));
             }
         }, 3000);
     }

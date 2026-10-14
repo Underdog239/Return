@@ -209,6 +209,11 @@
                             <input type="text" id="wizMindserverUrl" placeholder="http://127.0.0.1:8080">
                         </label>
                     </div>
+                    <div class="wiz-row" id="msStatusRow">
+                        <span class="status-pill small"><span class="dot offline" id="msDot"></span><span id="msText">checking MindServer…</span></span>
+                        <button class="btn ghost tiny" id="msRetryBtn" title="Search again for a running MindServer">↻ Retry</button>
+                        <span class="hint-text" id="msHint"></span>
+                    </div>
                 </div>
 
                 <!-- BRAIN -->
@@ -307,6 +312,18 @@
                 <h4>Camera</h4>
                 <ul>
                     <li>Live <b>prismarine-viewer</b> 3D camera embedded via iframe — drag to orbit, scroll to zoom, first-person toggle.</li>
+                </ul>
+                <h4>Troubleshooting</h4>
+                <ul>
+                    <li><b>“MindServer not reachable” / “Cannot reach MindServer”:</b> the dashboard page and the bot backend are two different things.
+                        MindServer is a program on <b>your computer</b> — start it with <code>./start.sh</code> (macOS/Linux) or <code>start.bat</code> (Windows),
+                        or <code>cd mindcraft &amp;&amp; npm install &amp;&amp; node main.js</code>. Then press <b>↻ Retry</b> in the MindServer row of this window.</li>
+                    <li>The simplest setup is to let MindServer serve this page: start it, then open <code>http://localhost:8080</code>.
+                        A dashboard opened from a website (GitHub Pages etc.) or from your phone has to reach MindServer over the network,
+                        and <code>127.0.0.1</code> then means <i>that device</i>, not your PC.</li>
+                    <li>MindServer on another machine? Type its address (e.g. <code>http://192.168.1.20:8080</code>) in <b>MindServer host URL</b> and hit <b>↻ Retry</b>.</li>
+                    <li><b>“Ollama not detected”:</b> MindServer is fine, but Ollama isn’t answering on port 11434. Install it from ollama.com,
+                        run <code>ollama pull sweaterdog/andy-4:micro-q8_0</code>, and check it with <code>ollama list</code>. You can also use a cloud provider instead.</li>
                 </ul>
             </div>
             <div class="modal-footer">
