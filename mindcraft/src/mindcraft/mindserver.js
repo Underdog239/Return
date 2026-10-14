@@ -398,9 +398,24 @@ export function createMindServer(port = 8080, host = '0.0.0.0') {
     if (host !== 'localhost' && host !== '0.0.0.0' && host !== '127.0.0.1') {
         console.log(`Binding to custom host ${host}.`);
     }
+
+    // Without this, a busy port would kill the process with a raw stack trace and
+    // the browser would just say "Cannot reach MindServer".
+    server.on('error', (err) => {
+        if (err.code === 'EADDRINUSE') {
+            console.error(`\n✗ Port ${port} is already in use, so MindServer could not start.`);
+            console.error(`  MindServer may already be running — open http://localhost:${port} in your browser.`);
+            console.error('  Otherwise close the program using that port, or change "mindserver_port" in settings.js.');
+            globalThis.process.exit(1);
+        }
+        console.error('MindServer error:', err);
+        globalThis.process.exit(1);
+    });
+
     server.listen(port, host, () => {
         console.log(`MindServer running on ${host === '0.0.0.0' ? 'all interfaces' : host}, port ${port}`);
         console.log(`Dashboard: http://localhost:${port}`);
+        console.log('Open that URL in your browser to use the dashboard. Press Ctrl+C to stop.');
     });
 
     return server;

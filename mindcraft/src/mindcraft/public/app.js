@@ -109,43 +109,173 @@ function apiUrl(path) {
     return (state.msBaseUrl || '') + path;
 }
 
+/* fetch() that always settles — an unreachable MindServer must not leave the UI on "checking…" */
+async function apiFetch(path, opts = {}, timeoutMs = 8000) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+        return await fetch(apiUrl(path), { cache: 'no-store', signal: ctrl.signal, ...opts });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 function viewerUrl(port) {
     const loc = window.location;
-    const m = loc.hostname.match(/^(\d+)(-.+)$/);
-    if (m && loc.protocol === 'https:') {
-        return `${loc.protocol}//${port}${m[2]}`;
+    const hosts = [loc.hostname];
+    if (state.msBaseUrl) {
+        try { hosts.push(new URL(state.msBaseUrl).hostname); } catch { /* ignore */ }
+    }
+    // Proxied preview hosts look like "3000-abc123.example.dev" — swap the port prefix.
+    for (const host of hosts) {
+        const m = host.match(/^(\d+)-(.+)$/);
+        if (m && loc.protocol === 'https:') return `${loc.protocol}//${port}-${m[2]}`;
     }
     if (state.msBaseUrl) {
-        try {
-            const u = new URL(state.msBaseUrl);
-            return `http://${u.hostname}:${port}`;
-        } catch { /* ignore */ }
+        try { return `http://${new URL(state.msBaseUrl).hostname}:${port}`; } catch { /* ignore */ }
     }
     return `http://${loc.hostname}:${port}`;
+}
+
+/* Where the MindServer (dashboard backend) lives. It is the same machine that
+   runs ./start.sh, NOT the machine that serves this page — unless this page is
+   served by MindServer itself. */
+function msDisplay(url) {
+    return url || window.location.origin;
 }
 
 /* ---------------- socket connection ---------------- */
 
 let socket = null;
 
-async function initMindserverConnection() {
-    // 1. Check if same-origin serves /api/health
-    let baseUrl = '';
-    let sameOriginOk = false;
-    try {
-        const r = await fetch('/api/health', { cache: 'no-store' });
-        const ct = r.headers.get('content-type') || '';
-        if (r.ok && ct.includes('application/json')) {
-            const d = await r.json();
-            if (d && d.ok) sameOriginOk = true;
-        }
-    } catch { /* not served by MindServer */ }
+const MS_DEFAULT_URL = 'http://127.0.0.1:8080';
+const MS_PROBE_TIMEOUT = 2500;
 
-    if (!sameOriginOk) {
-        baseUrl = (state.wizard.mindserverUrl || 'http://127.0.0.1:8080').replace(/\/+$/, '');
+/* Every place the MindServer could be. Tried in order, first one that answers
+   GET /api/health wins. */
+function msCandidates() {
+    const out = [];
+    const add = (url, label) => {
+        const u = (url || '').replace(/\/+$/, '');
+        if (!out.some(c => c.url === u)) out.push({ url: u, label: label || msDisplay(u) });
+    };
+
+    // 1) Same origin: this page was served by MindServer (the normal case: http://localhost:8080)
+    add('', 'this page');
+
+    // 2) Proxied preview/port hosts, e.g. "3000-abc123.preview.dev" → "8080-abc123.preview.dev"
+    const m = window.location.hostname.match(/^\d+-(.+)$/);
+    if (m && window.location.port) add(`${window.location.protocol}//8080-${m[1]}`, 'port 8080 of this host');
+
+    // 3) The URL saved in the wizard / typed by the user
+    add((state.wizard.mindserverUrl || MS_DEFAULT_URL));
+
+    // 4) Loopback on the default port
+    add(MS_DEFAULT_URL);
+    add('http://localhost:8080');
+
+    // 5) Same host, MindServer port (LAN setup). Skipped on https pages: the browser
+    //    would block a plain-http request as mixed content anyway.
+    if (window.location.protocol === 'http:' && window.location.hostname) {
+        add(`http://${window.location.hostname}:8080`);
     }
-    state.msBaseUrl = baseUrl;
-    connectSocket(baseUrl);
+    return out;
+}
+
+async function probeHealth(baseUrl) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), MS_PROBE_TIMEOUT);
+    try {
+        const r = await fetch((baseUrl || '') + '/api/health', { cache: 'no-store', signal: ctrl.signal });
+        const ct = r.headers.get('content-type') || '';
+        if (!r.ok || !ct.includes('application/json')) return null;
+        const d = await r.json();
+        return (d && d.ok) ? d : null;
+    } catch {
+        return null;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/* Hunt for a running MindServer. Returns the base URL that answered ('' = same origin). */
+async function discoverMindserver() {
+    state.msTried = [];
+    for (const c of msCandidates()) {
+        state.msTried.push(c.label);
+        const health = await probeHealth(c.url);
+        if (health) {
+            // remember where it was found so the next visit connects instantly
+            const where = c.url || window.location.origin;
+            if (where !== state.wizard.mindserverUrl) {
+                state.wizard.mindserverUrl = where;
+                saveConfig();
+            }
+            return c.url;
+        }
+    }
+    return null;
+}
+
+async function initMindserverConnection() {
+    setMindserverStatus('connecting', 'looking for MindServer…');
+    const found = await discoverMindserver();
+    if (found === null) {
+        state.msBaseUrl = null;
+        state.msConnected = false;
+        setMindserverStatus('offline', 'MindServer not found — click here for help');
+        renderMsStatusRow();
+        return false;
+    }
+    state.msBaseUrl = found;
+    connectSocket(found);
+    renderMsStatusRow();
+    return true;
+}
+
+/* Re-run discovery (called by the ↻ Retry button and when the URL field changes). */
+async function retryMindserver() {
+    const field = $('wizMindserverUrl');
+    if (field && field.value.trim()) {
+        state.wizard.mindserverUrl = field.value.trim().replace(/\/+$/, '');
+        saveConfig();
+    }
+    const ok = await initMindserverConnection();
+    if (ok) {
+        await checkOllama();
+        await loadKeyStatus();
+    } else {
+        renderMsStatusRow();
+    }
+    return ok;
+}
+
+function msTroubleshootHint() {
+    const bits = [];
+    bits.push(`Tried: ${(state.msTried || [MS_DEFAULT_URL]).join(', ')}.`);
+    bits.push('MindServer has to be running on your own computer: <code>./start.sh</code> (macOS/Linux), <code>start.bat</code> (Windows), or <code>cd mindcraft &amp;&amp; npm install &amp;&amp; node main.js</code>.');
+    const host = window.location.hostname;
+    if (host && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(host)) {
+        bits.push('This page is not served by MindServer itself, so the easiest fix is to open <code>http://localhost:8080</code> in your browser once it is running.');
+    }
+    bits.push('Then press <b>↻ Retry</b>.');
+    return bits.join(' ');
+}
+
+function renderMsStatusRow() {
+    const dot = $('msDot');
+    if (!dot) return;
+    const text = $('msText');
+    const hint = $('msHint');
+    if (state.msConnected) {
+        dot.className = 'dot online';
+        text.textContent = `MindServer online — ${msDisplay(state.msBaseUrl)}`;
+        hint.textContent = '';
+    } else {
+        dot.className = 'dot offline';
+        text.textContent = 'MindServer not reachable';
+        hint.innerHTML = msTroubleshootHint();
+    }
 }
 
 function connectSocket(baseUrl) {
@@ -153,33 +283,32 @@ function connectSocket(baseUrl) {
         try { socket.disconnect(); } catch { /* ignore */ }
     }
     if (typeof io === 'undefined') {
-        setMindserverStatus('offline', 'Socket.io not loaded — open via MindServer');
+        setMindserverStatus('offline', 'Socket.io not loaded — open http://localhost:8080');
         return;
     }
-    socket = baseUrl ? io(baseUrl, {
-        reconnection: true,
-        reconnectionDelay: 2000,
-        reconnectionDelayMax: 6000,
-    }) : io({
+    const opts = {
         reconnection: true,
         reconnectionDelay: 1000,
-        reconnectionDelayMax: 5000,
-    });
+        reconnectionDelayMax: 6000,
+        timeout: 8000,
+    };
+    socket = baseUrl ? io(baseUrl, opts) : io(opts);
 
     socket.on('connect', () => {
         state.msConnected = true;
         setMindserverStatus('online', 'MindServer online');
+        $('msStatus').title = `MindServer: ${msDisplay(state.msBaseUrl)} — click to change`;
         socket.emit('listen-to-agents');
     });
 
     socket.on('disconnect', () => {
         state.msConnected = false;
-        setMindserverStatus('offline', 'MindServer disconnected — run ./start.sh');
+        setMindserverStatus('offline', 'MindServer disconnected — click to reconnect');
     });
 
     socket.on('connect_error', () => {
         state.msConnected = false;
-        setMindserverStatus('offline', 'MindServer unreachable — run ./start.sh');
+        setMindserverStatus('offline', 'MindServer unreachable — click to reconnect');
     });
 
     socket.on('agents-status', (agents) => {
@@ -225,6 +354,7 @@ function setMindserverStatus(kind, text) {
     else if (kind === 'connecting') dot.className = 'dot connecting';
     else dot.className = 'dot offline';
     $('msStatusText').textContent = text;
+    renderMsStatusRow();
 }
 
 /* ---------------- agents ---------------- */
@@ -499,11 +629,19 @@ function openWizard() {
     $('wizError').classList.add('hidden');
 
     populateProviders();
+    renderMsStatusRow();
     checkOllama();
     loadVersions();
     loadKeyStatus();
 
     $('wizardModal').classList.remove('hidden');
+    $('msStatusRow').classList.remove('highlight');
+    if (!state.msConnected) {
+        $('msStatusRow').classList.add('highlight');
+        if (typeof $('msStatusRow').scrollIntoView === 'function') {
+            $('msStatusRow').scrollIntoView({ block: 'nearest' });
+        }
+    }
 }
 
 function populateProviders() {
@@ -539,10 +677,14 @@ async function checkOllama() {
     const dot = $('ollamaDot');
     const text = $('ollamaStatusText');
     const hint = $('ollamaHint');
+    if (!dot) return;
     dot.className = 'dot connecting';
     text.textContent = 'checking Ollama…';
+    hint.textContent = '';
     try {
-        const r = await fetch(apiUrl('/api/ollama'));
+        if (state.msBaseUrl === null) throw new Error('no MindServer');
+        const r = await apiFetch('/api/ollama', {}, 5000);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const data = await r.json();
         if (data.reachable) {
             dot.className = 'dot online';
@@ -565,13 +707,14 @@ async function checkOllama() {
     } catch {
         dot.className = 'dot offline';
         text.textContent = 'Cannot reach MindServer';
-        hint.textContent = 'Start MindServer locally (./start.sh) to check Ollama status.';
+        hint.innerHTML = msTroubleshootHint();
+        renderMsStatusRow();
     }
 }
 
 async function loadVersions() {
     try {
-        const r = await fetch(apiUrl('/api/supported-versions'));
+        const r = await apiFetch('/api/supported-versions', {}, 8000);
         const data = await r.json();
         const sel = $('wizVersion');
         const current = sel.value;
@@ -588,7 +731,7 @@ async function loadVersions() {
 
 async function loadKeyStatus() {
     try {
-        const r = await fetch(apiUrl('/api/keys'));
+        const r = await apiFetch('/api/keys', {}, 5000);
         const data = await r.json();
         const id = $('wizProvider').value;
         const p = PROVIDERS[id];
@@ -607,11 +750,11 @@ async function detectServer() {
     result.textContent = 'pinging…';
     btn.disabled = true;
     try {
-        const r = await fetch(apiUrl('/api/detect-server'), {
+        const r = await apiFetch('/api/detect-server', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ host: $('wizHost').value.trim(), port: parseInt($('wizPort').value) || 25565 }),
-        });
+        }, 12000);
         const data = await r.json();
         if (data.ok && data.server) {
             result.className = 'detect-result ok';
@@ -622,7 +765,9 @@ async function detectServer() {
         }
     } catch {
         result.className = 'detect-result bad';
-        result.textContent = '✗ Cannot reach MindServer. Run ./start.sh locally first.';
+        result.innerHTML = '✗ Cannot reach MindServer — it is not running (or not reachable) on this computer. '
+            + 'Start it with <code>./start.sh</code> (Windows: <code>start.bat</code>), then press <b>↻ Retry</b> above.';
+        renderMsStatusRow();
     }
     btn.disabled = false;
 }
@@ -663,7 +808,10 @@ async function createAgent() {
 
     // MindServer must be connected — no sandbox fallback
     if (!state.msConnected) {
-        showWizardError('MindServer is not running. Start it with: cd mindcraft && node main.js (or ./start.sh from the repo root). Then refresh this page.');
+        showWizardError('MindServer is not reachable from this page, so the bot cannot be created. '
+            + 'Start it on your computer — ./start.sh (macOS/Linux), start.bat (Windows), or "cd mindcraft && node main.js" — '
+            + 'then press ↻ Retry in the MindServer row above and try again.');
+        $('msStatusRow').classList.add('highlight');
         return;
     }
 
@@ -677,11 +825,11 @@ async function createAgent() {
     const p = PROVIDERS[provider];
     if (p.key && apiKey.length > 0) {
         try {
-            await fetch(apiUrl('/api/keys'), {
+            await apiFetch('/api/keys', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ [p.key]: apiKey }),
-            });
+            }, 8000);
         } catch { /* ignore */ }
     }
 
@@ -740,7 +888,11 @@ function init() {
     $('emptyCreateBtn').onclick = openWizard;
 
     $('msStatus').style.cursor = 'pointer';
-    $('msStatus').onclick = openWizard;
+    $('msStatus').onclick = () => {
+        openWizard();
+        $('wizMindserverUrl').focus();
+        $('wizMindserverUrl').select();
+    };
 
     $('helpBtn').onclick = () => $('helpModal').classList.remove('hidden');
     $('helpCloseBtn').onclick = () => $('helpModal').classList.add('hidden');
@@ -751,6 +903,20 @@ function init() {
     $('wizProvider').onchange = () => { onProviderChange(); loadKeyStatus(); };
     $('detectServerBtn').onclick = detectServer;
     $('createAgentBtn').onclick = createAgent;
+
+    // MindServer connection row
+    $('msRetryBtn').onclick = async () => {
+        const btn = $('msRetryBtn');
+        btn.disabled = true;
+        btn.textContent = '↻ searching…';
+        await retryMindserver();
+        btn.disabled = false;
+        btn.textContent = '↻ Retry';
+    };
+    $('wizMindserverUrl').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); $('msRetryBtn').click(); }
+    });
+    $('wizMindserverUrl').addEventListener('change', () => retryMindserver());
 
     // chat
     $('chatSendBtn').onclick = () => { sendMessage($('chatInput').value); $('chatInput').value = ''; };
