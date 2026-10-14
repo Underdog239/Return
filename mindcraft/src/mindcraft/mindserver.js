@@ -415,6 +415,12 @@ export function createMindServer(port = 8080, host = '0.0.0.0') {
     server.listen(port, host, () => {
         console.log(`MindServer running on ${host === '0.0.0.0' ? 'all interfaces' : host}, port ${port}`);
         console.log(`Dashboard: http://localhost:${port}`);
+        // Hosted sandboxes (e.g. Arena) expose ports as https://{port}-{sandboxId}.e2b.app.
+        // Print that link so it can be opened from another device (e.g. a phone).
+        const sandboxId = globalThis.process.env.E2B_SANDBOX_ID;
+        if (sandboxId) {
+            console.log(`Public link: https://${port}-${sandboxId}.e2b.app/`);
+        }
         console.log('Open that URL in your browser to use the dashboard. Press Ctrl+C to stop.');
     });
 
