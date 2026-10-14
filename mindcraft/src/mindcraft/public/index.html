@@ -6,7 +6,7 @@
     <title>MindCraft Web — AI Minecraft Bot Control</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
     <link rel="stylesheet" href="style.css">
-    <script src="/socket.io/socket.io.js"></script>
+    <script src="socket.io.min.js"></script>
 </head>
 <body>
     <!-- ====================== HEADER ====================== -->
@@ -19,7 +19,7 @@
             </div>
         </div>
         <div class="topbar-right">
-            <div class="status-pill" id="msStatus">
+            <div class="status-pill" id="msStatus" title="Click to configure MindServer connection">
                 <span class="dot offline" id="msStatusDot"></span>
                 <span id="msStatusText">connecting…</span>
             </div>
@@ -34,14 +34,17 @@
         <section id="emptyState" class="empty-state card">
             <div class="empty-inner">
                 <div class="empty-icon">🤖</div>
-                <h2>No bot yet</h2>
-                <p>Create your AI bot, point it at your Minecraft server (1.21.11 supported),<br>
+                <h2>No bot active yet</h2>
+                <p>Create your AI bot, point it at your Minecraft Java server (up to 1.21.11 supported) or launch the built-in <b>3D Browser Sandbox</b>,<br>
                    and watch it play through the live camera while you talk to its mind.</p>
-                <button class="btn primary big" id="emptyCreateBtn">🚀 Create your bot</button>
+                <div class="empty-actions">
+                    <button class="btn primary big" id="emptyCreateBtn">🚀 Create your bot</button>
+                    <button class="btn neutral big" id="emptyDemoBtn">🎮 Launch instant 3D demo bot</button>
+                </div>
                 <div class="empty-hints">
-                    <div class="hint"><b>1.</b> Start a Minecraft Java server or open your singleplayer world to LAN</div>
-                    <div class="hint"><b>2.</b> Click create, pick a brain (Ollama works fully offline) and connect</div>
-                    <div class="hint"><b>3.</b> Watch the camera and chat with your bot in this dashboard</div>
+                    <div class="hint"><b>1.</b> <b>Real Minecraft Server:</b> Run <code>./start.sh</code> (or <code>cd mindcraft &amp;&amp; npm install &amp;&amp; node main.js</code>) and open a Minecraft Java world to LAN / server (up to 1.21.11)</div>
+                    <div class="hint"><b>2.</b> <b>Instant Browser Sandbox:</b> Click <b>Launch instant 3D demo bot</b> above to test live 3D camera, AI chat, smart navigation, bridging, PVP &amp; hunting right in your browser</div>
+                    <div class="hint"><b>3.</b> <b>100% Offline Capable:</b> Pair with local <b>Ollama</b> (<code>sweaterdog/andy-4:micro-q8_0</code>) or any cloud LLM provider</div>
                 </div>
             </div>
         </section>
@@ -58,19 +61,23 @@
                                 <span class="dot offline" id="agentStatusDot"></span>
                                 <span id="agentStatusText">offline</span>
                             </span>
+                            <button class="btn tiny ghost" id="camPovBtn" title="Toggle First-Person / Orbit view (P)">👁 POV</button>
                             <button class="btn tiny ghost" id="camOpenBtn" title="Open camera in a new tab">↗</button>
                             <button class="btn tiny ghost" id="camFullscreenBtn" title="Fullscreen camera">⛶</button>
                         </div>
                     </div>
-                    <div class="camera-frame" id="cameraFrame">
-                        <iframe id="viewerFrame" allowfullscreen></iframe>
+                    <div class="camera-frame" id="cameraFrame" tabindex="0">
+                        <iframe id="viewerFrame" class="hidden" allowfullscreen></iframe>
+                        <canvas id="simViewerCanvas" class="sim-canvas hidden"></canvas>
                         <div class="camera-placeholder" id="cameraPlaceholder">
                             <div class="placeholder-icon">📷</div>
                             <div id="cameraPlaceholderText">Camera offline — bot not in game</div>
+                            <button class="btn neutral small-btn hidden" id="switchSandboxBtn">🎮 Run in 3D Browser Sandbox instead</button>
                         </div>
                     </div>
                     <div class="camera-footer">
-                        <span class="hint-text">Drag to orbit · scroll to zoom · <b>P</b> first-person view</span>
+                        <span class="hint-text">Drag to orbit · scroll to zoom · <b>P</b> or <b>👁 POV</b> first-person view</span>
+                        <span class="hint-text" id="cameraModeBadge"></span>
                     </div>
                 </div>
 
@@ -99,14 +106,17 @@
                         <div class="chat-notice">Messages you send go straight to the bot's AI mind. Commands like <code>!stats</code> run instantly; plain language gets thought about.</div>
                     </div>
                     <div class="chat-input-row">
-                        <input type="text" id="chatInput" placeholder="Tell the bot what to do… e.g. “build a house” or !collectBlocks("oak_log", 10)" autocomplete="off" maxlength="500">
+                        <input type="text" id="chatInput" placeholder='Tell the bot what to do… e.g. "build a house" or !collectBlocks("oak_log", 10)' autocomplete="off" maxlength="500">
                         <button class="btn primary" id="chatSendBtn">Send ➤</button>
                     </div>
                     <div class="quick-row">
                         <button class="chip" data-cmd="!stop">⏹ Stop</button>
                         <button class="chip" data-cmd="!stats">📊 Stats</button>
                         <button class="chip" data-cmd="!inventory">🎒 Inventory</button>
-                        <button class="chip" data-cmd="!goal">🎯 Goal</button>
+                        <button class="chip" data-cmd='!collectBlocks("oak_log", 6)'>🪓 Mine wood</button>
+                        <button class="chip" data-cmd="!bridgeTo(0, 64, 12)">🌉 Bridge gap</button>
+                        <button class="chip" data-cmd='!pvp("@hostile")'>⚔ Fight mobs</button>
+                        <button class="chip" data-cmd="!hunt(3)">🍖 Hunt food</button>
                         <button class="chip" id="comeHereChip">🏃 Come here</button>
                         <button class="chip" id="autonomousChip">🧠 Autonomous…</button>
                         <button class="chip danger" id="endGoalChip">✋ Stop autonomous</button>
@@ -166,37 +176,51 @@
 
                 <!-- SERVER -->
                 <div class="wiz-section">
-                    <div class="wiz-title">2 · Minecraft server (Java Edition)</div>
+                    <div class="wiz-title">2 · World / Minecraft server</div>
                     <div class="wiz-grid">
-                        <label class="field"><span>Server address</span>
-                            <input type="text" id="wizHost" value="127.0.0.1" placeholder="127.0.0.1">
-                        </label>
-                        <label class="field"><span>Port</span>
-                            <input type="number" id="wizPort" value="25565" placeholder="25565">
-                        </label>
-                    </div>
-                    <div class="wiz-row">
-                        <button class="btn neutral" id="detectServerBtn">📡 Detect server</button>
-                        <span class="detect-result" id="detectResult">Check that your server is running first</span>
-                    </div>
-                    <div class="wiz-grid">
-                        <label class="field"><span>Minecraft version</span>
-                            <select id="wizVersion"><option value="auto">Auto-detect (recommended)</option></select>
-                        </label>
-                        <label class="field"><span>Account type</span>
-                            <select id="wizAuth">
-                                <option value="offline" selected>Offline / LAN (no Microsoft account)</option>
-                                <option value="microsoft">Microsoft account (online servers)</option>
+                        <label class="field full"><span>Connection mode</span>
+                            <select id="wizWorldMode">
+                                <option value="auto">Auto — connect to Minecraft Java server (or 3D Browser Sandbox if offline)</option>
+                                <option value="minecraft">Real Minecraft Java Server (requires MindServer running locally)</option>
+                                <option value="sandbox">3D Browser Sandbox World (instant live camera in browser, no server needed)</option>
                             </select>
                         </label>
-                        <label class="field"><span>Behavior style</span>
-                            <select id="wizBaseProfile">
-                                <option value="survival" selected>Survival (hunts, defends itself, full smart mode)</option>
-                                <option value="assistant">Assistant (helpful, won't hunt on its own)</option>
-                                <option value="creative">Creative</option>
-                                <option value="god_mode">God mode (cheats)</option>
-                            </select>
-                        </label>
+                    </div>
+                    <div id="wizServerFields">
+                        <div class="wiz-grid" style="margin-top: 10px;">
+                            <label class="field"><span>Server address</span>
+                                <input type="text" id="wizHost" value="127.0.0.1" placeholder="127.0.0.1">
+                            </label>
+                            <label class="field"><span>Port</span>
+                                <input type="number" id="wizPort" value="25565" placeholder="25565">
+                            </label>
+                        </div>
+                        <div class="wiz-row">
+                            <button class="btn neutral" id="detectServerBtn">📡 Detect server</button>
+                            <span class="detect-result" id="detectResult">Check that your server is running first</span>
+                        </div>
+                        <div class="wiz-grid" style="margin-top: 10px;">
+                            <label class="field"><span>Minecraft version</span>
+                                <select id="wizVersion"><option value="auto">Auto-detect (up to 1.21.11)</option></select>
+                            </label>
+                            <label class="field"><span>Account type</span>
+                                <select id="wizAuth">
+                                    <option value="offline" selected>Offline / LAN (no Microsoft account)</option>
+                                    <option value="microsoft">Microsoft account (online servers)</option>
+                                </select>
+                            </label>
+                            <label class="field"><span>Behavior style</span>
+                                <select id="wizBaseProfile">
+                                    <option value="survival" selected>Survival (hunts, defends itself, full smart mode)</option>
+                                    <option value="assistant">Assistant (helpful, won't hunt on its own)</option>
+                                    <option value="creative">Creative</option>
+                                    <option value="god_mode">God mode (cheats)</option>
+                                </select>
+                            </label>
+                            <label class="field"><span>MindServer host URL <i>(for real servers)</i></span>
+                                <input type="text" id="wizMindserverUrl" placeholder="http://127.0.0.1:8080">
+                            </label>
+                        </div>
                     </div>
                 </div>
 
@@ -221,7 +245,7 @@
                         </label>
                     </div>
                     <div class="wiz-row checkbox-row">
-                        <label class="toggle"><input type="checkbox" id="wizCamera" checked> Live camera view (first person)</label>
+                        <label class="toggle"><input type="checkbox" id="wizCamera" checked> Live camera view (first person / orbit)</label>
                         <label class="toggle"><input type="checkbox" id="wizMemory"> Load memory from last session</label>
                     </div>
                 </div>
@@ -248,7 +272,7 @@
                 <div class="examples">
                     <button class="chip" data-autonomous="become the strongest warrior. Get good armor and weapons, and win fights.">⚔ become a warrior</button>
                     <button class="chip" data-autonomous="collect lots of wood and stone, then build an awesome house.">🏠 build a house</button>
-                    <button class="chip" data-autonomous="explore far away and bring back rare treasures.">🧭 explore &amp; loot</button>
+                    <button class="chip" data-autonomous="explore far away, bridge across the ravine, and bring back rare treasures.">🧭 explore &amp; loot</button>
                     <button class="chip" data-autonomous="get a full set of iron tools and armor as fast as possible.">⛏ gear up</button>
                 </div>
                 <label class="field"><span>Goal for the bot</span>
@@ -272,14 +296,14 @@
             <div class="modal-body help-body">
                 <h4>Getting started</h4>
                 <ol>
-                    <li>Run a Minecraft <b>Java Edition</b> server (vanilla, Paper, etc. — up to 1.21.11) or open a singleplayer world to LAN.</li>
-                    <li>Click <b>New Bot</b>, point it at your server and pick a brain. With <b>Ollama</b> installed everything runs 100% offline.</li>
-                    <li>Watch the camera feed and talk to your bot in the chat panel.</li>
+                    <li><b>Instant Browser Mode:</b> Click <b>Launch instant 3D demo bot</b> (or choose <i>3D Browser Sandbox</i> in <b>New Bot</b>) to watch and control an AI bot right in your browser with zero setup.</li>
+                    <li><b>Real Minecraft Java Server (up to 1.21.11):</b> Run <code>./start.sh</code> (or <code>cd mindcraft &amp;&amp; npm install &amp;&amp; node main.js</code>) on your machine, start your Minecraft Java server or LAN world, and connect via <b>New Bot</b>.</li>
+                    <li>Watch the live camera feed and talk to your bot in the chat panel.</li>
                 </ol>
                 <h4>Talking to the bot</h4>
                 <ul>
-                    <li><b>Plain language</b> goes to the bot's AI mind — it thinks, replies, and picks actions: <i>“go find diamonds”</i>.</li>
-                    <li><b>Commands</b> run instantly without the AI: <code>!collectBlocks("oak_log", 10)</code>, <code>!pvp("@hostile")</code>, <code>!goToCoordinates(100, 64, -200)</code>.</li>
+                    <li><b>Plain language</b> goes to the bot's AI mind — it thinks, replies, and picks actions: <i>“go find diamonds”</i>, <i>“build a shelter”</i>, <i>“bridge across the river”</i>.</li>
+                    <li><b>Commands</b> run instantly: <code>!collectBlocks("oak_log", 10)</code>, <code>!pvp("@hostile")</code>, <code>!bridgeTo(0, 64, 12)</code>, <code>!goToCoordinates(15, 64, -10)</code>.</li>
                     <li><b>Autonomous mode</b> gives it a goal it works on by itself: <code>!selfPrompt("build a farm")</code>.</li>
                 </ul>
                 <h4>Smart movement</h4>
@@ -287,14 +311,14 @@
                     <li>Navigation automatically <b>sprints, jumps, breaks obstacles, bridges gaps</b> with blocks from the bot's inventory, and <b>finds alternative routes</b> when blocked.</li>
                     <li><code>!bridgeTo(x, y, z)</code> forces manual sneaky-bridging across ravines.</li>
                 </ul>
-                <h4>Fighting & gathering</h4>
+                <h4>Fighting &amp; gathering</h4>
                 <ul>
                     <li><code>!pvp("@hostile")</code> / <code>!pvp("@player")</code> / <code>!pvp("Steve")</code> — advanced combat: strafing, crits, retreat &amp; eat, creeper dodging.</li>
                     <li><code>!hunt(5)</code> — hunts animals, cooks meat. <code>!collectBlocks("stone", 64)</code> — mines with best tools.</li>
                 </ul>
                 <h4>Camera</h4>
                 <ul>
-                    <li>The camera opens on the viewer port (3000+) once the bot is in game. Drag to orbit, scroll to zoom, press <b>P</b> for first-person.</li>
+                    <li>Drag to orbit, scroll to zoom, press <b>P</b> or click <b>👁 POV</b> for first-person view.</li>
                 </ul>
             </div>
             <div class="modal-footer">
