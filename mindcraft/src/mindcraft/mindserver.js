@@ -49,7 +49,22 @@ export function logoutAgent(agentName) {
 export function createMindServer(port = 8080, host = '0.0.0.0') {
     const app = express();
     server = http.createServer(app);
-    io = new Server(server);
+    io = new Server(server, {
+        cors: {
+            origin: '*',
+            methods: ['GET', 'POST', 'DELETE', 'OPTIONS']
+        }
+    });
+
+    // Allow GitHub Pages / external dashboards to connect to local or remote MindServer
+    app.use((req, res, next) => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        res.setHeader('Access-Control-Allow-Private-Network', 'true');
+        if (req.method === 'OPTIONS') return res.sendStatus(204);
+        next();
+    });
 
     // Serve static files
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
